@@ -1,0 +1,24 @@
+{
+  "name": "thousand-card-game",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "nuxt dev",
+    "build": "nuxt build",
+    "generate": "nuxt generate",
+    "preview": "nuxt preview",
+    "postinstall": "nuxt prepare"
+  },
+  "devDependencies": {
+    "@nuxt/devtools": "latest",
+    "@nuxtjs/tailwindcss": "^6.13.2",
+    "autoprefixer": "^10.4.21",
+    "nuxt": "^3.10.0",
+    "typescript": "^5.3.3",
+    "vue": "^3.4.15",
+    "vue-router": "^4.2.5"
+  },
+  "dependencies": {
+    "socket.io-client": "^4.7.4"
+  }
+}
