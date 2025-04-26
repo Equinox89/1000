@@ -1,5 +1,5 @@
 export type Suit = 'hearts' | 'diamonds' | 'clubs' | 'spades';
-export type Rank = '6' | '7' | '8' | '9' | '10' | 'J' | 'Q' | 'K' | 'A';
+export type Rank = '9' | '10' | 'J' | 'Q' | 'K' | 'A';
 
 export interface Card {
     suit: Suit;
@@ -14,6 +14,7 @@ export interface Player {
     hand: Card[];
     score: number;
     currentBid: number;
+    marriages: Suit[];
 }
 
 export interface GameState {
@@ -27,6 +28,7 @@ export interface GameState {
     phase: 'bidding' | 'playing' | 'roundEnd' | 'gameEnd';
     highestBid: number;
     highestBidder: string | null;
+    declaredMarriages: Record<string, Suit[]>;
 }
 
 export interface GameConfig {
@@ -34,4 +36,19 @@ export interface GameConfig {
     botNames: string[];
     startingScore: number;
     targetScore: number;
+}
+
+export interface GameResult {
+    date: string;
+    players: {
+        name: string;
+        score: number;
+        bid: number;
+    }[];
+    winner: string;
+}
+
+export interface GameHistory {
+    games: GameResult[];
+    totalScores: Record<string, number>;
 } 

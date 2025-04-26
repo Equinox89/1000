@@ -3,6 +3,7 @@ import type { Card, GameState, GameConfig, Player, Suit, Rank } from '../types/g
 export class Game {
     private state: GameState;
     private config: GameConfig;
+    private declaredMarriages: Record<string, Suit[]> = {};
 
     constructor(config: GameConfig) {
         this.config = config;
@@ -20,7 +21,8 @@ export class Game {
             isBot: false,
             hand: [],
             score: 0,
-            currentBid: 0
+            currentBid: 0,
+            marriages: []
         });
 
         // Create bot players
@@ -31,7 +33,8 @@ export class Game {
                 isBot: true,
                 hand: [],
                 score: 0,
-                currentBid: 0
+                currentBid: 0,
+                marriages: []
             });
         }
 
@@ -45,13 +48,14 @@ export class Game {
             talon: [],
             phase: 'bidding',
             highestBid: 0,
-            highestBidder: null
+            highestBidder: null,
+            declaredMarriages: {}
         };
     }
 
     private createDeck(): Card[] {
         const suits: Suit[] = ['hearts', 'diamonds', 'clubs', 'spades'];
-        const ranks: Rank[] = ['6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
+        const ranks: Rank[] = ['9', '10', 'J', 'Q', 'K', 'A'];
         const deck: Card[] = [];
 
         for (const suit of suits) {
@@ -69,10 +73,7 @@ export class Game {
 
     private getCardValue(rank: Rank): number {
         const values: Record<Rank, number> = {
-            '6': 6,
-            '7': 7,
-            '8': 8,
-            '9': 9,
+            '9': 0,
             '10': 10,
             'J': 2,
             'Q': 3,
@@ -100,22 +101,71 @@ export class Game {
             player.hand = this.state.deck.splice(0, cardsPerPlayer);
         });
 
-        // Create prikup
+        // Create talon
         this.state.talon = this.state.deck.splice(0, talonSize);
+    }
+
+    private hasMarriage(hand: Card[]): boolean {
+        const suits = ['hearts', 'diamonds', 'clubs', 'spades'];
+        for (const suit of suits) {
+            const hasQueen = hand.some(card => card.suit === suit && card.rank === 'Q');
+            const hasKing = hand.some(card => card.suit === suit && card.rank === 'K');
+            if (hasQueen && hasKing) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private getMarriageValue(suit: Suit): number {
+        return suit === 'hearts' ? 100 : 80;
+    }
+
+    public declareMarriage(playerId: string, suit: Suit): boolean {
+        const player = this.state.players.find(p => p.id === playerId);
+        if (!player) return false;
+
+        const hasQueen = player.hand.some(card => card.suit === suit && card.rank === 'Q');
+        const hasKing = player.hand.some(card => card.suit === suit && card.rank === 'K');
+
+        if (hasQueen && hasKing && !this.declaredMarriages[playerId]?.includes(suit)) {
+            if (!this.declaredMarriages[playerId]) {
+                this.declaredMarriages[playerId] = [];
+            }
+            this.declaredMarriages[playerId].push(suit);
+            player.score += this.getMarriageValue(suit);
+            return true;
+        }
+
+        return false;
     }
 
     public makeBid(playerId: string, bid: number): boolean {
         if (this.state.phase !== 'bidding') return false;
-        if (bid <= this.state.highestBid) return false;
-
+        
         const player = this.state.players.find(p => p.id === playerId);
         if (!player) return false;
+
+        // Check if bid is higher than current highest bid
+        if (bid <= this.state.highestBid) return false;
+
+        // Check if bid is above 120 and player has marriage
+        if (bid > 120 && !this.hasMarriage(player.hand)) return false;
 
         player.currentBid = bid;
         this.state.highestBid = bid;
         this.state.highestBidder = playerId;
 
-        // Move to next player or end bidding
+        // If bid is 120 or higher, other players without marriage must pass
+        if (bid >= 120) {
+            this.state.players.forEach(p => {
+                if (p.id !== playerId && !this.hasMarriage(p.hand)) {
+                    p.currentBid = 0; // Force pass
+                }
+            });
+        }
+
+        // Move to next player
         const currentIndex = this.state.players.findIndex(p => p.id === playerId);
         const nextIndex = (currentIndex + 1) % this.state.players.length;
         this.state.currentPlayer = this.state.players[nextIndex].id;
@@ -123,9 +173,37 @@ export class Game {
         // If we've gone full circle, end bidding
         if (nextIndex === this.state.players.findIndex(p => p.id === this.state.dealer)) {
             this.state.phase = 'playing';
+            // Set the highest bidder as the first player
+            if (this.state.highestBidder) {
+                this.state.currentPlayer = this.state.highestBidder;
+                // Give talon cards to the highest bidder
+                const highestBidderPlayer = this.state.players.find(p => p.id === this.state.highestBidder);
+                if (highestBidderPlayer) {
+                    highestBidderPlayer.hand.push(...this.state.talon);
+                    this.state.talon = [];
+                    
+                    // Distribute one card to each player
+                    this.state.players.forEach(p => {
+                        if (p.id !== this.state.highestBidder) {
+                            const lowestCard = this.getLowestValueCard(highestBidderPlayer.hand);
+                            const cardIndex = highestBidderPlayer.hand.indexOf(lowestCard);
+                            if (cardIndex !== -1) {
+                                const [card] = highestBidderPlayer.hand.splice(cardIndex, 1);
+                                p.hand.push(card);
+                            }
+                        }
+                    });
+                }
+            }
         }
 
         return true;
+    }
+
+    private getLowestValueCard(hand: Card[]): Card {
+        return hand.reduce((lowest, current) => 
+            current.value < lowest.value ? current : lowest
+        );
     }
 
     public playCard(playerId: string, cardIndex: number): boolean {
@@ -133,16 +211,20 @@ export class Game {
         if (this.state.currentPlayer !== playerId) return false;
 
         const player = this.state.players.find(p => p.id === playerId);
-        if (!player) return false;
+        if (!player || cardIndex < 0 || cardIndex >= player.hand.length) return false;
 
+        // Check if the card is playable (following suit if possible)
         const card = player.hand[cardIndex];
-        if (!card) return false;
+        if (!this.isCardPlayable(player, card)) return false;
 
         // Remove card from player's hand
-        player.hand.splice(cardIndex, 1);
+        const [playedCard] = player.hand.splice(cardIndex, 1);
 
         // Add card to current trick
-        this.state.currentTrick.push(card);
+        this.state.currentTrick.push({
+            ...playedCard,
+            playedBy: playerId
+        });
 
         // Move to next player
         const currentIndex = this.state.players.findIndex(p => p.id === playerId);
@@ -157,15 +239,51 @@ export class Game {
         return true;
     }
 
+    private isCardPlayable(player: Player, card: Card): boolean {
+        // If it's the first card of the trick, any card is playable
+        if (this.state.currentTrick.length === 0) return true;
+
+        // Get the leading suit
+        const leadingSuit = this.state.currentTrick[0].suit;
+
+        // If the card matches the leading suit, it's playable
+        if (card.suit === leadingSuit) return true;
+
+        // If the player has no cards of the leading suit, any card is playable
+        return !player.hand.some(c => c.suit === leadingSuit);
+    }
+
     private resolveTrick(): void {
-        // Determine trick winner based on trump suit and card values
-        // This is a simplified version - you'll need to implement the full rules
-        const winningCard = this.state.currentTrick.reduce((winner, card) => {
-            if (!winner) return card;
-            if (card.suit === this.state.trumpSuit && winner.suit !== this.state.trumpSuit) return card;
-            if (card.suit === winner.suit && card.value > winner.value) return card;
-            return winner;
-        });
+        const leadingSuit = this.state.currentTrick[0].suit;
+        const trumpSuit = this.state.trumpSuit;
+
+        // Find the winning card
+        let winningCard = this.state.currentTrick[0];
+        let winningPlayerId = this.state.currentTrick[0].playedBy;
+
+        for (let i = 1; i < this.state.currentTrick.length; i++) {
+            const currentCard = this.state.currentTrick[i];
+            
+            // If current card is trump and winning card is not, current card wins
+            if (currentCard.suit === trumpSuit && winningCard.suit !== trumpSuit) {
+                winningCard = currentCard;
+                winningPlayerId = currentCard.playedBy;
+            }
+            // If both cards are trump or both are not trump, compare values
+            else if (currentCard.suit === winningCard.suit) {
+                if (currentCard.value > winningCard.value) {
+                    winningCard = currentCard;
+                    winningPlayerId = currentCard.playedBy;
+                }
+            }
+        }
+
+        // Update scores
+        const winningPlayer = this.state.players.find(p => p.id === winningPlayerId);
+        if (winningPlayer) {
+            const trickValue = this.state.currentTrick.reduce((sum, card) => sum + card.value, 0);
+            winningPlayer.score += trickValue;
+        }
 
         // Clear current trick
         this.state.currentTrick = [];
@@ -173,20 +291,39 @@ export class Game {
         // Check if round is over
         if (this.state.players.every(p => p.hand.length === 0)) {
             this.endRound();
+        } else if (winningPlayerId) {
+            // Set the winner as the next player to lead
+            this.state.currentPlayer = winningPlayerId;
         }
     }
 
     private endRound(): void {
-        // Calculate scores and update game state
-        // This is a simplified version - you'll need to implement the full scoring rules
+        // Calculate final scores and update game state
         this.state.phase = 'roundEnd';
+
+        // Check if the highest bidder didn't meet their bid
+        const highestBidder = this.state.players.find(p => p.id === this.state.highestBidder);
+        if (highestBidder) {
+            if (highestBidder.score < highestBidder.currentBid) {
+                // Subtract the bid amount from the player's score
+                highestBidder.score -= highestBidder.currentBid;
+            }
+        }
 
         // Check if game is over
         if (this.state.players.some(p => p.score >= this.config.targetScore)) {
             this.state.phase = 'gameEnd';
         } else {
             // Start new round
-            this.state = this.initializeGame();
+            const newState = this.initializeGame();
+            newState.players = this.state.players.map(player => ({
+                ...player,
+                hand: [],
+                currentBid: 0,
+                marriages: []
+            }));
+            this.state = newState;
+            this.dealCards();
         }
     }
 
